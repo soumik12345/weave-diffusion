@@ -1,6 +1,9 @@
-from .sd_prompt_interpolator_pipeline import (
-    StableDiffusionPromptInterpolationPipeline,
+from .sd_multi_prompt_interpolator_pipeline import (
+    StableDiffusionMultiPromptInterpolationPipeline,
     StableDiffusionInterpolationOutput,
 )
 
-__all__ = ["StableDiffusionPromptInterpolationPipeline", "StableDiffusionInterpolationOutput"]
+__all__ = [
+    "StableDiffusionMultiPromptInterpolationPipeline",
+    "StableDiffusionInterpolationOutput",
+]

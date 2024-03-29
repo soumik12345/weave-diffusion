@@ -29,7 +29,7 @@ class StableDiffusionInterpolationOutput(BaseOutput):
     frames: List[Image.Image]
 
 
-class StableDiffusionInterpolationPipeline(StableDiffusionPipeline):
+class StableDiffusionMultiPromptInterpolationPipeline(StableDiffusionPipeline):
 
     def __init__(
         self,

@@ -1,7 +1,7 @@
 import torch
 import wandb
 
-from weave_diffusion import StableDiffusionPromptInterpolationPipeline
+from weave_diffusion import StableDiffusionMultiPromptInterpolationPipeline
 from weave_diffusion.utils import autogenerate_seed, log_video
 
 
@@ -9,16 +9,16 @@ device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 
 wandb.init(project="weave-diffusion", entity="geekyrakshit", job_type="sd_slerp")
 config = wandb.config
-config.num_interpolation_steps = 30
-config.height = 512
-config.width = 512
+config.num_interpolation_steps = 60
+config.height = 1024
+config.width = 1024
 config.seed = 825375911  # autogenerate_seed()
 generator = torch.manual_seed(config.seed)
 
-pipe = StableDiffusionPromptInterpolationPipeline.from_pretrained(
+pipe = StableDiffusionMultiPromptInterpolationPipeline.from_pretrained(
     "stabilityai/stable-diffusion-2-1", torch_dtype=torch.float32
 ).to(device)
-pipe.set_progress_bar_config(disable=True)
+pipe.set_progress_bar_config(leave=False)
 pipe.unet = torch.compile(pipe.unet, mode="reduce-overhead", fullgraph=True)
 
 # Text prompts that describes the desired output image.
@@ -41,4 +41,4 @@ frames = pipe(
 video = wandb.Video(log_video(images=frames, save_path="./output"))
 table = wandb.Table(columns=["prompts", "negative_prompts", "interpolated_video"])
 table.add_data(prompts, negative_prompts, video)
-wandb.log({"Interpolated-Video": video})
+wandb.log({"Interpolated-Video": video, "Result-Table": table})
