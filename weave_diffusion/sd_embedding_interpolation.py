@@ -1,6 +1,4 @@
-from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Union
-
 from diffusers import StableDiffusionPipeline
 from diffusers.image_processor import PipelineImageInput
 from diffusers.models import AutoencoderKL, UNet2DConditionModel
@@ -8,8 +6,7 @@ from diffusers.pipelines.stable_diffusion.safety_checker import (
     StableDiffusionSafetyChecker,
 )
 from diffusers.schedulers import KarrasDiffusionSchedulers
-from diffusers.utils.outputs import BaseOutput
-
+import torch
 from transformers import (
     CLIPImageProcessor,
     CLIPTextModel,
@@ -17,19 +14,12 @@ from transformers import (
     CLIPVisionModelWithProjection,
 )
 
-import torch
 from tqdm.auto import tqdm
-from PIL import Image
 
-from .utils import slerp
-
-
-@dataclass
-class StableDiffusionInterpolationOutput(BaseOutput):
-    frames: List[Image.Image]
+from .output import StableDiffusionInterpolationOutput
 
 
-class StableDiffusionMultiPromptInterpolationPipeline(StableDiffusionPipeline):
+class StableDiffusionLatentWalkerPipeline(StableDiffusionPipeline):
 
     def __init__(
         self,
@@ -55,41 +45,13 @@ class StableDiffusionMultiPromptInterpolationPipeline(StableDiffusionPipeline):
             requires_safety_checker,
         )
 
-    def interpolate(
-        self,
-        prompts_embeds,
-        negative_prompts_embeds,
-        num_interpolation_steps,
-        batch_size,
-    ):
-        # Interpolating between embeddings pairs for the given number of interpolation steps.
-        interpolated_prompt_embeds = []
-        interpolated_negative_prompts_embeds = []
-        for i in range(batch_size - 1):
-            interpolated_prompt_embeds.append(
-                slerp(prompts_embeds[i], prompts_embeds[i + 1], num_interpolation_steps)
-            )
-            interpolated_negative_prompts_embeds.append(
-                slerp(
-                    negative_prompts_embeds[i],
-                    negative_prompts_embeds[i + 1],
-                    num_interpolation_steps,
-                )
-            )
-        interpolated_prompt_embeds = torch.cat(interpolated_prompt_embeds, dim=0).to(
-            self.device
-        )
-        interpolated_negative_prompts_embeds = torch.cat(
-            interpolated_negative_prompts_embeds, dim=0
-        ).to(self.device)
-        return interpolated_prompt_embeds, interpolated_negative_prompts_embeds
-
     def __call__(
         self,
-        prompts: List[str],
-        negative_prompts: Optional[List[str]],
+        prompt: str = None,
+        negative_prompt: Optional[str] = None,
         height: Optional[int] = None,
         width: Optional[int] = None,
+        interpolation_step_size: float = 0.001,
         num_interpolation_steps: int = 30,
         num_inference_steps: int = 50,
         timesteps: List[int] = None,
@@ -97,6 +59,8 @@ class StableDiffusionMultiPromptInterpolationPipeline(StableDiffusionPipeline):
         eta: float = 0.0,
         generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         latents: Optional[torch.FloatTensor] = None,
+        prompt_embeds: Optional[torch.FloatTensor] = None,
+        negative_prompt_embeds: Optional[torch.FloatTensor] = None,
         ip_adapter_image: Optional[PipelineImageInput] = None,
         ip_adapter_image_embeds: Optional[List[torch.FloatTensor]] = None,
         return_dict: bool = True,
@@ -107,68 +71,70 @@ class StableDiffusionMultiPromptInterpolationPipeline(StableDiffusionPipeline):
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
         **kwargs,
     ) -> StableDiffusionInterpolationOutput:
-        batch_size = len(prompts)
         height = height or self.unet.config.sample_size * self.vae_scale_factor
         width = width or self.unet.config.sample_size * self.vae_scale_factor
         channels = self.unet.config.in_channels
 
-        # Tokenizing and encoding prompts into embeddings.
-        prompts_tokens = self.tokenizer(
-            prompts,
+        # Tokenizing and encoding the prompt into embeddings.
+        prompt_tokens = self.tokenizer(
+            prompt,
             padding="max_length",
             max_length=self.tokenizer.model_max_length,
             truncation=True,
             return_tensors="pt",
         )
-        prompts_embeds = self.text_encoder(prompts_tokens.input_ids.to(self.device))[0]
+        prompt_embeds = self.text_encoder(prompt_tokens.input_ids.to(self.device))[0]
 
-        # Tokenizing and encoding negative prompts into embeddings.
-        if negative_prompts is None:
-            negative_prompts = [""] * batch_size
+        # Tokenizing and encoding the negative prompt into embeddings.
+        if negative_prompt is None:
+            negative_prompt = [""]
 
-        negative_prompts_tokens = self.tokenizer(
-            negative_prompts,
+        negative_prompt_tokens = self.tokenizer(
+            negative_prompt,
             padding="max_length",
             max_length=self.tokenizer.model_max_length,
             truncation=True,
             return_tensors="pt",
         )
-        negative_prompts_embeds = self.text_encoder(
-            negative_prompts_tokens.input_ids.to(self.device)
+        negative_prompt_embeds = self.text_encoder(
+            negative_prompt_tokens.input_ids.to(self.device)
         )[0]
 
-        # Generating initial U-Net latent vectors from a random normal distribution.
+        # Generating initial latent vectors from a random normal distribution,
+        # with the option to use a generator for reproducibility.
         latents = torch.randn(
             (1, channels, height // 8, width // 8), generator=generator
         )
 
-        interpolated_prompt_embeds, interpolated_negative_prompts_embeds = (
-            self.interpolate(
-                prompts_embeds=prompts_embeds,
-                negative_prompts_embeds=negative_prompts_embeds,
-                num_interpolation_steps=num_interpolation_steps,
-                batch_size=batch_size,
+        walked_embeddings = []
+
+        # Interpolating between embeddings for the given number of interpolation steps.
+        for i in range(num_interpolation_steps):
+            walked_embeddings.append(
+                [
+                    prompt_embeds + interpolation_step_size * i,
+                    negative_prompt_embeds + interpolation_step_size * i,
+                ]
             )
-        )
 
         # Generating images using the interpolated embeddings.
         images = []
-        for prompt_embeds, negative_prompt_embeds in tqdm(
-            zip(interpolated_prompt_embeds, interpolated_negative_prompts_embeds),
+        for latent in tqdm(
+            walked_embeddings,
             desc="Generating interpolated frames",
-            total=len(interpolated_prompt_embeds),
+            total=num_interpolation_steps,
         ):
             pipeline_output = super().__call__(
                 height=height,
                 width=width,
                 num_images_per_prompt=1,
-                prompt_embeds=prompt_embeds[None, ...],
-                negative_prompt_embeds=negative_prompt_embeds[None, ...],
+                prompt_embeds=latent[0],
+                negative_prompt_embeds=latent[1],
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale,
                 generator=generator,
                 latents=latents,
-                num_inference_steps=num_inference_steps,
                 timesteps=timesteps,
-                guidance_scale=guidance_scale,
                 eta=eta,
                 ip_adapter_image=ip_adapter_image,
                 ip_adapter_image_embeds=ip_adapter_image_embeds,

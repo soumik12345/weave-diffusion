@@ -1,0 +1,19 @@
+[tool.poetry]
+name = "weave-diffusion"
+version = "0.1.0"
+description = ""
+authors = ["soumik12345 <19soumik.rakshit96@gmail.com>"]
+readme = "README.md"
+packages = [{ include = "weave_diffusion" }]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+diffusers = "^0.27.2"
+accelerate = "^0.28.0"
+wandb = "^0.16.5"
+moviepy = "^1.0.3"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"

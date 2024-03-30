@@ -12,7 +12,7 @@ config = wandb.config
 config.num_interpolation_steps = 60
 config.height = 1024
 config.width = 1024
-config.seed = 825375911  # autogenerate_seed()
+config.seed = autogenerate_seed()
 generator = torch.manual_seed(config.seed)
 
 pipe = StableDiffusionMultiPromptInterpolationPipeline.from_pretrained(

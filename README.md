@@ -1,1 +1,1 @@
-# weave-diffusion
+# Weave Diffusion
