@@ -1,7 +1,9 @@
 import torch
 import wandb
 
-from weave_diffusion import StableDiffusionMultiPromptInterpolationPipeline
+from weave_diffusion.stable_diffusion import (
+    StableDiffusionMultiPromptInterpolationPipeline,
+)
 from weave_diffusion.utils import autogenerate_seed, log_video
 
 
