@@ -1,0 +1,3 @@
+from .multi_prompt_interpolator import PixArtAlphaMultiPromptInterpolationPipeline
+
+__all__ = ["PixArtAlphaMultiPromptInterpolationPipeline"]

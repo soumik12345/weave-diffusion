@@ -9,3 +9,8 @@ from diffusers.utils.outputs import BaseOutput
 @dataclass
 class StableDiffusionInterpolationOutput(BaseOutput):
     frames: List[Image.Image]
+
+
+@dataclass
+class PixartAlphaInterpolationOutput(BaseOutput):
+    frames: List[Image.Image]
