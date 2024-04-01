@@ -7,7 +7,11 @@ from weave_diffusion.utils import autogenerate_seed, log_video
 
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-wandb.init(project="weave-diffusion", entity="geekyrakshit", job_type="sd_slerp")
+wandb.init(
+    project="weave-diffusion",
+    entity="geekyrakshit",
+    job_type="pixart/multi-prompt-interpolation",
+)
 config = wandb.config
 config.num_interpolation_steps = 60
 config.height = 1024
