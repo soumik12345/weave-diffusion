@@ -34,7 +34,12 @@ frames = pipe(
     interpolation_step_size=config.interpolation_step_size,
 ).frames
 
-video = wandb.Video(log_video(images=frames, save_path="./output"))
+video_path = log_video(images=frames, save_path="./output")
+video = wandb.Video(video_path)
 table = wandb.Table(columns=["prompts", "negative_prompts", "interpolated_video"])
 table.add_data(prompt, negative_prompt, video)
 wandb.log({"Interpolated-Video": video, "Result-Table": table})
+
+artifact = wandb.Artifact(name=f"video-{wandb.run.id}", type="video")
+artifact.add_dir(local_path=video_path)
+wandb.log_artifact(artifact)
