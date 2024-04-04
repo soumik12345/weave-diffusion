@@ -3,6 +3,7 @@ import random
 import time
 from typing import List
 
+import imageio
 import numpy as np
 import torch
 from PIL import Image
@@ -40,20 +41,11 @@ def autogenerate_seed() -> int:
     return seed
 
 
-def log_video(images: List[Image.Image], save_path: str, duration: int = 100) -> str:
+def log_video(images: List[Image.Image], save_path: str) -> str:
     os.makedirs(save_path, exist_ok=True)
-    # Generate a file name based on the current time, replacing colons with hyphens
-    # to ensure the filename is valid for file systems that don't allow colons.
     filename = time.strftime("%H:%M:%S", time.localtime()).replace(":", "-")
-    # Save the first image in the list as a GIF file at the 'save_path' location.
-    # The rest of the images in the list are added as subsequent frames to the GIF.
-    # The GIF will play each frame for 100 milliseconds and will loop indefinitely.
-    save_file_path = os.path.join(save_path, f"{filename}.gif")
-    images[0].save(
-        save_file_path,
-        save_all=True,
-        append_images=images[1:],
-        duration=duration,
-        loop=0,
-    )
+    save_file_path = os.path.join(save_path, f"{filename}.mp4")
+    with imageio.get_writer(save_file_path, fps=10) as video:
+        for image in images:
+            video.append_data(np.array(image))
     return save_file_path
