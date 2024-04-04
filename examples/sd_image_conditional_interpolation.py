@@ -8,9 +8,6 @@ from weave_diffusion.stable_diffusion import (
 )
 from weave_diffusion.utils import autogenerate_seed, log_video
 
-import torch._dynamo
-torch._dynamo.config.suppress_errors = True
-
 
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
@@ -61,5 +58,5 @@ table.add_data(prompts, negative_prompts, video)
 wandb.log({"Interpolated-Video": video, "Result-Table": table})
 
 artifact = wandb.Artifact(name=f"video-{wandb.run.id}", type="video")
-artifact.add_dir(local_path=video_path)
+artifact.add_file(local_path=video_path)
 wandb.log_artifact(artifact)

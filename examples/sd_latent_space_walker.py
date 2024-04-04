@@ -41,5 +41,5 @@ table.add_data(prompt, negative_prompt, video)
 wandb.log({"Interpolated-Video": video, "Result-Table": table})
 
 artifact = wandb.Artifact(name=f"video-{wandb.run.id}", type="video")
-artifact.add_dir(local_path=video_path)
+artifact.add_file(local_path=video_path)
 wandb.log_artifact(artifact)
