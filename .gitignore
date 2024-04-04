@@ -161,3 +161,4 @@ cython_debug/
 **output/
 **wandb/
 **.ruff_cache/
+**artifacts/

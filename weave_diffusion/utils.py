@@ -1,11 +1,12 @@
 import os
 import random
 import time
-from typing import List
+from typing import List, Tuple
 
 import imageio
 import numpy as np
 import torch
+import wandb
 from PIL import Image
 
 
@@ -49,3 +50,19 @@ def log_video(images: List[Image.Image], save_path: str) -> str:
         for image in images:
             video.append_data(np.array(image))
     return save_file_path
+
+
+def get_generated_artifacts(project: str, entity: str, run_id: str) -> Tuple[str, str]:
+    api = wandb.Api()
+    run = api.run(f"{entity}/{project}/{run_id}")
+    output_artifacts = run.logged_artifacts()
+    return [f"{entity}/{project}/{artifact.name}" for artifact in output_artifacts]
+
+
+def get_images_from_run(project: str, entity: str, run_id: str) -> str:
+    api = wandb.Api()
+    run = api.run("<entity>/<project>/<run_id>")
+    for file in run.files():
+        if file.name.endswith(".png"):
+            file.download()
+            return file.name
