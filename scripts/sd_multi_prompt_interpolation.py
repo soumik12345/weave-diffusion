@@ -16,13 +16,13 @@ wandb.init(
 )
 config = wandb.config
 config.num_interpolation_steps = 60
-config.height = 1024
-config.width = 1024
+config.height = 1920
+config.width = 1080
 config.seed = autogenerate_seed()
 generator = torch.manual_seed(config.seed)
 
 pipe = StableDiffusionMultiPromptInterpolationPipeline.from_pretrained(
-    "IDKiro/sdxs-512-0.9", torch_dtype=torch.float32
+    "stabilityai/stable-diffusion-2-1", torch_dtype=torch.float32
 ).to(device)
 pipe.set_progress_bar_config(leave=False)
 pipe.unet = torch.compile(pipe.unet, mode="reduce-overhead", fullgraph=True)
@@ -30,12 +30,12 @@ pipe.unet = torch.compile(pipe.unet, mode="reduce-overhead", fullgraph=True)
 # Text prompts that describes the desired output image.
 prompts = [
     "a network of woolen balls connected by threads looking like cells, realistic rendering, color palette consisting of apricot, yello, cyan, pink, and white",
-    "a cat playing with a bunch of woolen balls, realistic rendering, color palette consisting of apricot, yello, cyan, pink, and white",
+    "several woven woolen blankets of colors apricot, yello, cyan, pink, and white lying in a stack",
 ]
 # Negative prompts that can be used to steer the generation away from certain features.
 negative_prompts = [
     "metal, squirming, virus, bacteria, static, frame, painting, illustration, low quality, low resolution, greyscale, monochrome, cropped, lowres, jpeg artifacts, semi-realistic worst quality",
-    "deformed legs, deformed limbs, deformed face, deformed eyes, deformed mouth, bad anatomy, virus, bacteria, static, frame, painting, illustration, low quality, low resolution, greyscale, monochrome, cropped, lowres, jpeg artifacts, semi-realistic worst quality",
+    "metal, squirming, virus, bacteria, static, frame, painting, illustration, low quality, low resolution, greyscale, monochrome, cropped, lowres, jpeg artifacts, semi-realistic worst quality",
 ]
 
 frames = pipe(
