@@ -95,7 +95,8 @@ class ControlnetInterpolationPipeline(StableDiffusionControlNetPipeline):
         timesteps: List[int] = None,
         guidance_scale: float = 7.5,
         eta: float = 0.0,
-        generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
+        # generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
+        seeds: Optional[List[int]] = None,
         latents: Optional[torch.FloatTensor] = None,
         ip_adapter_image: Optional[PipelineImageInput] = None,
         ip_adapter_image_embeds: Optional[List[torch.FloatTensor]] = None,
@@ -140,11 +141,6 @@ class ControlnetInterpolationPipeline(StableDiffusionControlNetPipeline):
             negative_prompts_tokens.input_ids.to(self.device)
         )[0]
 
-        # Generating initial U-Net latent vectors from a random normal distribution.
-        latents = torch.randn(
-            (1, channels, height // 8, width // 8), generator=generator
-        )
-
         interpolated_prompt_embeds, interpolated_negative_prompts_embeds = (
             self.interpolate(
                 prompts_embeds=prompts_embeds,
@@ -154,10 +150,26 @@ class ControlnetInterpolationPipeline(StableDiffusionControlNetPipeline):
             )
         )
 
+        generators = (
+            None
+            if seeds is None
+            else [
+                torch.Generator(device="cpu").manual_seed(seeds[idx])
+                for idx in range(len(interpolated_prompt_embeds))
+            ]
+        )
+
+        # Generating initial U-Net latent vectors from a random normal distribution.
+        latents = torch.randn(
+            (1, channels, height // 8, width // 8), generator=generators[0]
+        )
+
         # Generating images using the interpolated embeddings.
         images = []
-        for prompt_embeds, negative_prompt_embeds in tqdm(
-            zip(interpolated_prompt_embeds, interpolated_negative_prompts_embeds),
+        for idx, (prompt_embeds, negative_prompt_embeds) in tqdm(
+            enumerate(
+                zip(interpolated_prompt_embeds, interpolated_negative_prompts_embeds)
+            ),
             desc="Generating interpolated frames",
             total=len(interpolated_prompt_embeds),
         ):
@@ -168,7 +180,7 @@ class ControlnetInterpolationPipeline(StableDiffusionControlNetPipeline):
                 num_images_per_prompt=1,
                 prompt_embeds=prompt_embeds[None, ...],
                 negative_prompt_embeds=negative_prompt_embeds[None, ...],
-                generator=generator,
+                generator=generators[idx],
                 latents=latents,
                 num_inference_steps=num_inference_steps,
                 timesteps=timesteps,

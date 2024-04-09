@@ -3,6 +3,7 @@ import random
 import time
 from typing import List, Tuple
 
+import cv2
 import imageio
 import numpy as np
 import torch
@@ -66,3 +67,42 @@ def get_images_from_run(project: str, entity: str, run_id: str) -> str:
         if file.name.endswith(".png"):
             file.download()
             return file.name
+
+
+def pad_image(image, target_shape):
+    original_shape = image.shape
+    vertical_padding = (target_shape[0] - original_shape[0]) // 2
+    extra_vertical_padding = (target_shape[0] - original_shape[0]) % 2
+    horizontal_padding = (target_shape[1] - original_shape[1]) // 2
+    extra_horizontal_padding = (target_shape[1] - original_shape[1]) % 2
+    padded_image = np.pad(
+        image,
+        pad_width=(
+            (vertical_padding, vertical_padding + extra_vertical_padding),
+            (horizontal_padding, horizontal_padding + extra_horizontal_padding),
+            (0, 0),
+        ),
+        mode="constant",
+        constant_values=0,
+    )
+    return padded_image
+
+
+def convert_to_canny(image, canny_low_threshold, canny_high_threshold):
+    image = cv2.Canny(image, canny_low_threshold, canny_high_threshold)
+    image = image[:, :, None]
+    image = np.concatenate([image, image, image], axis=2)
+    return Image.fromarray(image)
+
+
+def center_crop(img_array, crop_percentage):
+    crop_percent = crop_percentage / 100.0
+    height, width, _ = img_array.shape
+    crop_size = min(height, width) * crop_percent
+    start_x = (width - crop_size) // 2
+    end_x = start_x + crop_size
+    start_y = (height - crop_size) // 2
+    end_y = start_y + crop_size
+    start_x, end_x, start_y, end_y = int(start_x), int(end_x), int(start_y), int(end_y)
+    cropped_img = img_array[start_y:end_y, start_x:end_x]
+    return cropped_img
