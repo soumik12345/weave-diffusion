@@ -1,3 +1,4 @@
+import base64
 import os
 import random
 import time
@@ -106,3 +107,8 @@ def center_crop(img_array, crop_percentage):
     start_x, end_x, start_y, end_y = int(start_x), int(end_x), int(start_y), int(end_y)
     cropped_img = img_array[start_y:end_y, start_x:end_x]
     return cropped_img
+
+
+def get_base64_string_from_image_file(image_file: str):
+    with open(image_file, "rb") as image_file:
+        return base64.b64encode(image_file.read()).decode("utf-8")

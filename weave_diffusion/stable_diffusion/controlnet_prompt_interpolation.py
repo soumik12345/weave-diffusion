@@ -1,3 +1,4 @@
+import os
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from diffusers import StableDiffusionControlNetPipeline
 from diffusers.image_processor import PipelineImageInput
@@ -14,11 +15,16 @@ from transformers import (
     CLIPVisionModelWithProjection,
 )
 
+from langchain_anthropic import ChatAnthropic
+from langchain_core.messages import HumanMessage, SystemMessage
+
 import torch
+import wandb
+from PIL import Image
 from tqdm.auto import tqdm
 
 from ..output import StableDiffusionInterpolationOutput
-from ..utils import slerp
+from ..utils import slerp, autogenerate_seed, get_base64_string_from_image_file
 
 
 class ControlnetInterpolationPipeline(StableDiffusionControlNetPipeline):
@@ -53,6 +59,16 @@ class ControlnetInterpolationPipeline(StableDiffusionControlNetPipeline):
             image_encoder,
             requires_safety_checker,
         )
+        self.seeds = []
+        self.verification_responses = []
+        self.wandb_table = wandb.Table(
+            columns=[
+                "idx",
+                "generated_frame",
+                "verification_response",
+                "verification_metadata",
+            ]
+        )
 
     def interpolate(
         self,
@@ -83,6 +99,11 @@ class ControlnetInterpolationPipeline(StableDiffusionControlNetPipeline):
         ).to(self.device)
         return interpolated_prompt_embeds, interpolated_negative_prompts_embeds
 
+    def verify_generated_frame(
+        self, generated_frame: Image.Image, output_dir: str, *args, **kwargs
+    ) -> int:
+        return True, {}
+
     def __call__(
         self,
         prompts: List[str],
@@ -95,7 +116,6 @@ class ControlnetInterpolationPipeline(StableDiffusionControlNetPipeline):
         timesteps: List[int] = None,
         guidance_scale: float = 7.5,
         eta: float = 0.0,
-        # generator: Optional[Union[torch.Generator, List[torch.Generator]]] = None,
         seeds: Optional[List[int]] = None,
         latents: Optional[torch.FloatTensor] = None,
         ip_adapter_image: Optional[PipelineImageInput] = None,
@@ -109,12 +129,20 @@ class ControlnetInterpolationPipeline(StableDiffusionControlNetPipeline):
         clip_skip: Optional[int] = None,
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
+        output_dir: str = "./outputs",
+        max_validation_retries: int = 5,
         **kwargs,
     ):
+        os.makedirs(output_dir, exist_ok=True)
         batch_size = len(prompts)
         height = height or self.unet.config.sample_size * self.vae_scale_factor
         width = width or self.unet.config.sample_size * self.vae_scale_factor
         channels = self.unet.config.in_channels
+        controlnet_conditioning_scale = (
+            [controlnet_conditioning_scale]
+            if isinstance(controlnet_conditioning_scale, float)
+            else controlnet_conditioning_scale
+        )
 
         # Tokenizing and encoding prompts into embeddings.
         prompts_tokens = self.tokenizer(
@@ -150,18 +178,14 @@ class ControlnetInterpolationPipeline(StableDiffusionControlNetPipeline):
             )
         )
 
-        generators = (
-            None
-            if seeds is None
-            else [
-                torch.Generator(device="cpu").manual_seed(seeds[idx])
-                for idx in range(len(interpolated_prompt_embeds))
-            ]
-        )
+        self.seeds = seeds or [
+            self.autogenerate_seed() for _ in range(len(interpolated_prompt_embeds))
+        ]
 
         # Generating initial U-Net latent vectors from a random normal distribution.
         latents = torch.randn(
-            (1, channels, height // 8, width // 8), generator=generators[0]
+            (1, channels, height // 8, width // 8),
+            generator=torch.Generator(device="cpu").manual_seed(self.seeds[0]),
         )
 
         # Generating images using the interpolated embeddings.
@@ -173,34 +197,56 @@ class ControlnetInterpolationPipeline(StableDiffusionControlNetPipeline):
             desc="Generating interpolated frames",
             total=len(interpolated_prompt_embeds),
         ):
-            pipeline_output = super().__call__(
-                image=image,
-                height=height,
-                width=width,
-                num_images_per_prompt=1,
-                prompt_embeds=prompt_embeds[None, ...],
-                negative_prompt_embeds=negative_prompt_embeds[None, ...],
-                generator=generators[idx],
-                latents=latents,
-                num_inference_steps=num_inference_steps,
-                timesteps=timesteps,
-                guidance_scale=guidance_scale,
-                eta=eta,
-                ip_adapter_image=ip_adapter_image,
-                ip_adapter_image_embeds=ip_adapter_image_embeds,
-                output_type="pil",
-                return_dict=return_dict,
-                cross_attention_kwargs=cross_attention_kwargs,
-                clip_skip=clip_skip,
-                callback_on_step_end=callback_on_step_end,
-                callback_on_step_end_tensor_inputs=callback_on_step_end_tensor_inputs,
-                controlnet_conditioning_scale=controlnet_conditioning_scale,
-                guess_mode=guess_mode,
-                control_guidance_start=control_guidance_start,
-                control_guidance_end=control_guidance_end,
-                **kwargs,
-            )
-            generated_frame = pipeline_output.images[0]
-            images.append(generated_frame)
+            is_regeneration_acceptable = True
+            num_retries = 0
+            while is_regeneration_acceptable:
+                generator = torch.Generator(device="cpu").manual_seed(self.seeds[idx])
+                pipeline_output = super().__call__(
+                    image=image,
+                    height=height,
+                    width=width,
+                    num_images_per_prompt=1,
+                    prompt_embeds=prompt_embeds[None, ...],
+                    negative_prompt_embeds=negative_prompt_embeds[None, ...],
+                    generator=generator,
+                    latents=latents,
+                    num_inference_steps=num_inference_steps,
+                    timesteps=timesteps,
+                    guidance_scale=guidance_scale,
+                    eta=eta,
+                    ip_adapter_image=ip_adapter_image,
+                    ip_adapter_image_embeds=ip_adapter_image_embeds,
+                    output_type="pil",
+                    return_dict=return_dict,
+                    cross_attention_kwargs=cross_attention_kwargs,
+                    clip_skip=clip_skip,
+                    callback_on_step_end=callback_on_step_end,
+                    callback_on_step_end_tensor_inputs=callback_on_step_end_tensor_inputs,
+                    controlnet_conditioning_scale=controlnet_conditioning_scale[idx],
+                    guess_mode=guess_mode,
+                    control_guidance_start=control_guidance_start,
+                    control_guidance_end=control_guidance_end,
+                    **kwargs,
+                )
+                generated_frame = pipeline_output.images[0]
+                verification_response, verification_metadata = (
+                    self.verify_generated_frame(generated_frame, output_dir)
+                )
+                self.verification_responses.append(verification_response)
+                self.wandb_table.add_data(
+                    idx,
+                    wandb.Image(generated_frame),
+                    verification_response,
+                    verification_metadata,
+                )
+                if verification_response or num_retries >= max_validation_retries:
+                    is_regeneration_acceptable = False
+                    images.append(generated_frame)
+                else:
+                    self.seeds[idx] = autogenerate_seed()
+                    generator = torch.Generator(device="cpu").manual_seed(
+                        self.seeds[idx]
+                    )
+                    num_retries += 1
 
         return StableDiffusionInterpolationOutput(frames=images)
