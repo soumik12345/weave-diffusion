@@ -28,6 +28,7 @@ from weave_diffusion.utils import (
 )
 
 import cv2
+import fire
 import numpy as np
 import torch
 import wandb
@@ -69,7 +70,7 @@ class VLMAssistedControlnetInterpolationPipeline(ControlnetInterpolationPipeline
         self.multi_modal_model = ChatAnthropic(model="claude-3-opus-20240229")
         self.multi_modal_system_message = SystemMessage(
             content="""You are an expert at determining anomalies in AI-generated images.
-            Your goal is to carefully observe the image and describe the exact number of circles in the generated frames."""
+            Your goal is to carefully observe the image and describe any answers asked in the context of AI-generated images to the point."""
         )
 
     def verify_generated_frame(
@@ -98,105 +99,132 @@ class VLMAssistedControlnetInterpolationPipeline(ControlnetInterpolationPipeline
         return response <= 12, {"circles_count": response}
 
 
-device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+def generate(
+    prompts: List[str] = [
+        "threads of wool on a black matte flat graphic design background, realistic rendering, color palette consisting of apricot, yellow, cyan, pink, and white, sharp, bright and contrasting colors",
+        "threads of cotton on a black matte flat graphic design background, realistic rendering, color palette consisting of apricot, yellow, cyan, pink, and white, sharp, bright and contrasting colors",
+        "threads of wool on a black matte flat graphic design background, realistic rendering, color palette consisting of apricot, yellow, cyan, pink, and white, sharp, bright and contrasting colors",
+        "balls of cotton on a black matte flat graphic design background, realistic rendering, color palette consisting of apricot, yellow, cyan, pink, and white, sharp, bright and contrasting colors",
+        "balls of wool on a black matte flat graphic design background, realistic rendering, color palette consisting of apricot, yellow, cyan, pink, and white, sharp, bright and contrasting colors",
+        "yellow cotton balls on a black matte flat graphic design background, realistic rendering, 4K, imax, unreal engine, sharp, bright and contrasting colors",
+        "yellow woolen balls on a black matte flat graphic design background, realistic rendering, 4K, imax, logo design, sharp, bright and contrasting colors",
+    ],
+    negative_prompts: List[str] = [
+        "cross hatching, brown background, text, apple, mango, orange, fruits, virus, bacteria, static, frame, painting, illustration, low quality, low resolution, greyscale, monochrome, cropped, lowres, jpeg artifacts, semi-realistic worst quality",
+        "cross hatching, brown background, text, apple, mango, orange, fruits, virus, bacteria, static, frame, painting, illustration, low quality, low resolution, greyscale, monochrome, cropped, lowres, jpeg artifacts, semi-realistic worst quality",
+        "cross hatching, brown background, text, apple, mango, orange, fruits, virus, bacteria, static, frame, painting, illustration, low quality, low resolution, greyscale, monochrome, cropped, lowres, jpeg artifacts, semi-realistic worst quality",
+        "cross hatching, brown background, text, blue, apple, mango, orange, fruits, virus, bacteria, static, frame, painting, illustration, low quality, low resolution, greyscale, monochrome, cropped, lowres, jpeg artifacts, semi-realistic worst quality",
+        "cross hatching, brown background, text, apple, mango, orange, fruits, virus, bacteria, static, frame, painting, illustration, low quality, low resolution, greyscale, monochrome, cropped, lowres, jpeg artifacts, semi-realistic worst quality",
+        "cross hatching, brown background, text, metal, apple, mango, orange, fruits, virus, bacteria, static, frame, painting, illustration, low quality, low resolution, greyscale, monochrome, cropped, lowres, jpeg artifacts, semi-realistic worst quality",
+        "cross hatching, brown background, text, metal, apple, mango, orange, fruits, virus, bacteria, static, frame, painting, illustration, low quality, low resolution, greyscale, monochrome, cropped, lowres, jpeg artifacts, semi-realistic worst quality",
+    ],
+    image: str = "logo.png",
+    canny_image: str = "logo_white.png",
+    controlnet_model_address: str = "lllyasviel/sd-controlnet-canny",
+    generation_model_address: str = "runwayml/stable-diffusion-v1-5",
+    apply_vlm_assistance: bool = False,
+    num_interpolation_steps: int = 5,
+    height: int = 1024,
+    width: int = 1024,
+    canny_low_threshold: int = 100,
+    canny_high_threshold: int = 200,
+    wandb_project: str = "weave-diffusion",
+    wandb_job_type: str = "controlnet",
+):
+    device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
-wandb.init(
-    project="weave-diffusion",
-    entity="geekyrakshit",
-    job_type="controlnet",
-)
-config = wandb.config
-config.num_interpolation_steps = 5
-config.height = 1024
-config.width = 1024
-config.canny_low_threshold = 100
-config.canny_high_threshold = 200
+    wandb.init(project=wandb_project, job_type=wandb_job_type)
+    config = wandb.config
+    config.num_interpolation_steps = num_interpolation_steps
+    config.height = height
+    config.width = width
+    config.canny_low_threshold = canny_low_threshold
+    config.canny_high_threshold = canny_high_threshold
 
-controlnet = ControlNetModel.from_pretrained(
-    "lllyasviel/sd-controlnet-canny",
-    torch_dtype=torch.float32,
-    use_safetensors=True,
-)
-pipe = ControlnetInterpolationPipeline.from_pretrained(
-    "runwayml/stable-diffusion-v1-5",
-    controlnet=controlnet,
-    torch_dtype=torch.float32,
-    safety_checker=None,
-    use_safetensors=True,
-).to(device)
-pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
-pipe.set_progress_bar_config(leave=False)
-pipe.unet = torch.compile(pipe.unet, mode="reduce-overhead", fullgraph=True)
+    controlnet = ControlNetModel.from_pretrained(
+        controlnet_model_address,
+        torch_dtype=torch.float32,
+        use_safetensors=True,
+    )
+    pipe = (
+        VLMAssistedControlnetInterpolationPipeline.from_pretrained(
+            generation_model_address,
+            controlnet=controlnet,
+            torch_dtype=torch.float32,
+            safety_checker=None,
+            use_safetensors=True,
+        ).to(device)
+        if apply_vlm_assistance
+        else ControlnetInterpolationPipeline.from_pretrained(
+            generation_model_address,
+            controlnet=controlnet,
+            torch_dtype=torch.float32,
+            safety_checker=None,
+            use_safetensors=True,
+        ).to(device)
+    )
+    pipe.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
+    pipe.set_progress_bar_config(leave=False)
+    pipe.unet = torch.compile(pipe.unet, mode="reduce-overhead", fullgraph=True)
 
-image = np.array(Image.open("logo.png"))[:, :, :3]
-image = center_crop(image, 50)
-image = cv2.resize(image, (config.height, config.width), interpolation=cv2.INTER_LINEAR)
-canny_image = Image.open("logo_white.png")
+    image = np.array(Image.open(image))[:, :, :3]
+    image = center_crop(image, 50)
+    image = cv2.resize(
+        image, (config.height, config.width), interpolation=cv2.INTER_LINEAR
+    )
+    canny_image = Image.open(canny_image)
+
+    config.prompts = prompts
+    config.negative_prompts = negative_prompts
+
+    config.num_frames = (len(config.prompts) - 1) * config.num_interpolation_steps
+    # config.controlnet_conditioning_scale = np.linspace(
+    #     0.0, 1.0, config.num_frames // 2
+    # ).tolist() + [1.0] * (config.num_frames // 2)
+    config.controlnet_conditioning_scale = [1.0] * config.num_frames
+
+    api = wandb.Api()
+    run = api.run("geekyrakshit/weave-diffusion/l035qocc")
+    config_dict = run.config
+
+    frames = pipe(
+        prompts=config.prompts,
+        negative_prompts=config.negative_prompts,
+        image=canny_image,
+        num_interpolation_steps=config.num_interpolation_steps,
+        seeds=[autogenerate_seed()] * config.num_frames,
+        controlnet_conditioning_scale=config.controlnet_conditioning_scale,
+    ).frames
+
+    config.seeds = pipe.seeds
+
+    video_path = log_video(images=frames, save_path="./output")
+    video = wandb.Video(video_path)
+    table = wandb.Table(
+        columns=[
+            "input_image",
+            "canny_image",
+            "prompts",
+            "negative_prompts",
+            "interpolated_video",
+        ]
+    )
+    table.add_data(
+        wandb.Image(image),
+        wandb.Image(canny_image),
+        config.prompts,
+        config.negative_prompts,
+        video,
+    )
+    loggable_dict = {"Interpolated-Video": video, "Result-Table": table}
+    if isinstance(pipe, VLMAssistedControlnetInterpolationPipeline):
+        loggable_dict["Debug_table"] = pipe.wandb_table
+    wandb.log(loggable_dict)
+
+    artifact = wandb.Artifact(name=f"video-{wandb.run.id}", type="video")
+    artifact.add_file(local_path=video_path)
+    wandb.log_artifact(artifact)
 
 
-config.prompts = [
-    "threads of woolen on a black matte flat graphic design background, realistic rendering, color palette consisting of apricot, yellow, cyan, pink, and white, sharp, bright and contrasting colors",
-    "threads of wool on a black matte flat graphic design background, realistic rendering, color palette consisting of apricot, yellow, cyan, pink, and white, sharp, bright and contrasting colors",
-    "threads of woolen and wool on a black matte flat graphic design background, realistic rendering, color palette consisting of apricot, yellow, cyan, pink, and white, sharp, bright and contrasting colors",
-    "balls of wool on a black matte flat graphic design background, realistic rendering, color palette consisting of apricot, yellow, cyan, pink, and white, sharp, bright and contrasting colors",
-    "balls of woolen on a black matte flat graphic design background, realistic rendering, color palette consisting of apricot, yellow, cyan, pink, and white, sharp, bright and contrasting colors",
-    "yellow wool balls on a black matte flat graphic design background, realistic rendering, 4K, imax, unreal engine, sharp, bright and contrasting colors",
-    "yellow woolen balls on a black matte flat graphic design background, realistic rendering, 4K, imax, logo design, sharp, bright and contrasting colors",
-]
-# Negative prompts that can be used to steer the generation away from certain features.
-config.negative_prompts = [
-    "text, apple, mango, orange, fruits, virus, bacteria, static, frame, painting, illustration, low quality, low resolution, greyscale, monochrome, cropped, lowres, jpeg artifacts, semi-realistic worst quality",
-    "text, apple, mango, orange, fruits, virus, bacteria, static, frame, painting, illustration, low quality, low resolution, greyscale, monochrome, cropped, lowres, jpeg artifacts, semi-realistic worst quality",
-    "text, apple, mango, orange, fruits, virus, bacteria, static, frame, painting, illustration, low quality, low resolution, greyscale, monochrome, cropped, lowres, jpeg artifacts, semi-realistic worst quality",
-    "text, blue, apple, mango, orange, fruits, virus, bacteria, static, frame, painting, illustration, low quality, low resolution, greyscale, monochrome, cropped, lowres, jpeg artifacts, semi-realistic worst quality",
-    "text, apple, mango, orange, fruits, virus, bacteria, static, frame, painting, illustration, low quality, low resolution, greyscale, monochrome, cropped, lowres, jpeg artifacts, semi-realistic worst quality",
-    "text, metal, apple, mango, orange, fruits, virus, bacteria, static, frame, painting, illustration, low quality, low resolution, greyscale, monochrome, cropped, lowres, jpeg artifacts, semi-realistic worst quality",
-    "text, metal, apple, mango, orange, fruits, virus, bacteria, static, frame, painting, illustration, low quality, low resolution, greyscale, monochrome, cropped, lowres, jpeg artifacts, semi-realistic worst quality",
-]
-
-config.num_frames = (len(config.prompts) - 1) * config.num_interpolation_steps
-# config.controlnet_conditioning_scale = np.linspace(
-#     0.0, 1.0, config.num_frames // 2
-# ).tolist() + [1.0] * (config.num_frames // 2)
-config.controlnet_conditioning_scale = [1.0] * config.num_frames
-
-frames = pipe(
-    prompts=config.prompts,
-    negative_prompts=config.negative_prompts,
-    image=canny_image,
-    num_interpolation_steps=config.num_interpolation_steps,
-    seeds=[autogenerate_seed()] * config.num_frames,
-    controlnet_conditioning_scale=config.controlnet_conditioning_scale,
-).frames
-
-config.seeds = pipe.seeds
-
-video_path = log_video(images=frames, save_path="./output")
-video = wandb.Video(video_path)
-table = wandb.Table(
-    columns=[
-        "input_image",
-        "canny_image",
-        "prompts",
-        "negative_prompts",
-        "interpolated_video",
-    ]
-)
-table.add_data(
-    wandb.Image(image),
-    wandb.Image(canny_image),
-    config.prompts,
-    config.negative_prompts,
-    video,
-)
-wandb.log(
-    {
-        "Interpolated-Video": video,
-        "Result-Table": table,
-        "Debug_table": pipe.wandb_table,
-    }
-)
-
-artifact = wandb.Artifact(name=f"video-{wandb.run.id}", type="video")
-artifact.add_file(local_path=video_path)
-wandb.log_artifact(artifact)
+if __name__ == "__main__":
+    fire.Fire(generate)
